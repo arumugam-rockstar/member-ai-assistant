@@ -8,7 +8,7 @@ from flask_cors import CORS
 from huggingface_hub import InferenceClient
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import FastEmbedEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_community.vectorstores import Chroma
 
 # Set up logging
@@ -27,7 +27,7 @@ client = InferenceClient("Qwen/Qwen2.5-7B-Instruct", token=HF_TOKEN)
 EXTRACT_FOLDER = "./extracted_docs"
 DB_DIR = "./chroma_db"
 
-# Global Objects & Thread Lock for Safe Lazy Loading
+# Global Objects & Thread Lock
 embedding_model = None
 vector_store = None
 db_lock = threading.Lock()
@@ -42,8 +42,9 @@ def find_zip_file():
 
 
 def get_vector_db():
-    """Thread-safe lazy initialization for Chroma Vector DB.
-    Uses FastEmbed (ONNX) to keep memory footprint under 150MB.
+    """Thread-safe vector database loader.
+    Prioritizes loading pre-built chroma_db from disk.
+    If missing, extracts zip and builds ChromaDB locally using FastEmbed.
     """
     global vector_store, embedding_model
 
@@ -51,15 +52,23 @@ def get_vector_db():
         if vector_store is not None:
             return vector_store
 
-        # Initialize ONNX-based lightweight embedding model
+        # Initialize ONNX-based lightweight FastEmbed model
         if embedding_model is None:
-            logger.info("--> Initializing lightweight FastEmbed model (ONNX Runtime)...")
+            logger.info("--> Initializing FastEmbed model (ONNX Runtime)...")
             embedding_model = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
-        zip_filename = find_zip_file()
+        # CASE 1: ChromaDB already exists (ideal production state)
+        if os.path.exists(DB_DIR) and os.listdir(DB_DIR):
+            logger.info("--> Loading pre-built Vector Database from disk...")
+            vector_store = Chroma(
+                persist_directory=DB_DIR, 
+                embedding_function=embedding_model
+            )
+            return vector_store
 
-        # If vector storage folder doesn't exist yet, extract zip & build database
-        if zip_filename and not os.path.exists(DB_DIR):
+        # CASE 2: ChromaDB is missing -> Build it locally from knowledge_base.zip
+        zip_filename = find_zip_file()
+        if zip_filename:
             logger.info(f"--> Found zip: '{zip_filename}'. Extracting and building Vector DB...")
 
             if os.path.exists(EXTRACT_FOLDER):
@@ -77,7 +86,7 @@ def get_vector_db():
             )
             raw_documents = loader.load()
 
-            # Split raw text into manageable context chunks
+            # Split text into manageable chunks
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
             chunks = text_splitter.split_documents(raw_documents)
 
@@ -89,18 +98,12 @@ def get_vector_db():
             )
             return vector_store
 
-        # Load existing vector database from disk if present
-        if os.path.exists(DB_DIR) and os.listdir(DB_DIR):
-            logger.info("--> Loading existing Vector Database from disk...")
-            vector_store = Chroma(persist_directory=DB_DIR, embedding_function=embedding_model)
-            return vector_store
-
-        raise FileNotFoundError("knowledge_base.zip not found and no Chroma DB exists!")
+        raise FileNotFoundError("Neither chroma_db folder nor knowledge_base.zip was found!")
 
 
 @app.route("/", methods=["GET"])
 def home():
-    """Healthcheck endpoint for Render."""
+    """Healthcheck endpoint."""
     return jsonify({
         "status": "online",
         "service": "PMICC AI Assistant API",
@@ -118,14 +121,13 @@ def chat():
         return jsonify({"error": "No message provided."}), 400
 
     try:
-        # Load DB lazily upon first incoming user request
         db = get_vector_db()
 
-        # Retrieve top 5 most contextually relevant chunks
+        # Retrieve top 5 relevant document chunks
         relevant_docs = db.similarity_search(user_message, k=5)
         context_text = "\n\n---\n\n".join([doc.page_content for doc in relevant_docs])
 
-        # Construct System Prompt with Knowledge Base boundary limits
+        # Prompt with Knowledge Base boundaries
         system_prompt = f"""You are the official AI Assistant for the PMI Chennai Chapter.
 Answer the user's question accurately using ONLY the retrieved facts from our knowledge base context below.
 If a specific name, role, or detail is not present in the context, politely state that you do not have that specific information.
@@ -139,7 +141,7 @@ If a specific name, role, or detail is not present in the context, politely stat
             {"role": "user", "content": user_message}
         ]
 
-        # Query Hugging Face Serverless Inference API
+        # Query Hugging Face Inference API
         response = client.chat_completion(
             messages,
             max_tokens=300,
@@ -155,6 +157,5 @@ If a specific name, role, or detail is not present in the context, politely stat
 
 
 if __name__ == "__main__":
-    # Dynamic port assignment required by Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
