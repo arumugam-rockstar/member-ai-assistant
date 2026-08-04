@@ -1,58 +1,281 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Non-Profit Assistant</title>
-  <style>
-    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
-    #chat-box { height: 400px; border: 1px solid #ccc; background: #fff; padding: 15px; overflow-y: auto; border-radius: 8px; }
-    .msg { margin: 8px 0; padding: 8px 12px; border-radius: 6px; }
-    .user { background: #007bff; color: white; text-align: right; }
-    .bot { background: #e9ecef; color: #333; }
-    .input-area { display: flex; gap: 10px; margin-top: 10px; }
-    input { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #ccc; }
-    button { padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMI Chennai Chapter AI Assistant</title>
+    <style>
+        /* --- General Page Styling --- */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5;
+        }
+
+        /* --- Floating Chat Button --- */
+        .chat-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background-color: #C14A2E; /* Primary brand accent */
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            font-size: 26px;
+            transition: transform 0.3s ease, background-color 0.3s ease;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chat-btn:hover {
+            transform: scale(1.08);
+            background-color: #A03D26;
+        }
+
+        /* --- Chat Window --- */
+        .chat-window {
+            display: none;
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            width: 380px;
+            height: 560px;
+            max-height: calc(100vh - 130px);
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            z-index: 999;
+            flex-direction: column;
+            overflow: hidden;
+            transition: all 0.3s ease-in-out;
+        }
+
+        .chat-window.active {
+            display: flex;
+        }
+
+        /* --- Chat Header --- */
+        .chat-header {
+            background-color: #000000;
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid #C14A2E;
+        }
+
+        .header-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-img {
+            height: 38px;
+            width: auto;
+            object-fit: contain;
+            background: #ffffff;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .title-text {
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: #ffffff;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: #ffffff;
+            font-size: 22px;
+            cursor: pointer;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        .close-btn:hover {
+            opacity: 1;
+        }
+
+        /* --- Chat Messages Box --- */
+        #chat-box {
+            flex-grow: 1;
+            padding: 16px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .msg {
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 14px;
+            line-height: 1.45;
+            max-width: 82%;
+            word-wrap: break-word;
+        }
+
+        .user {
+            background-color: #007bff;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+
+        .bot {
+            background-color: #ffffff;
+            color: #212529;
+            border: 1px solid #e0e0e0;
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        /* --- Input Area --- */
+        .input-area {
+            display: flex;
+            padding: 12px;
+            background-color: #ffffff;
+            border-top: 1px solid #eee;
+            gap: 8px;
+        }
+
+        #user-input {
+            flex-grow: 1;
+            padding: 10px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        #user-input:focus {
+            border-color: #007bff;
+        }
+
+        button.send-btn {
+            padding: 10px 18px;
+            background-color: #28a745;
+            color: white;
+            font-weight: 600;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button.send-btn:hover {
+            background-color: #218838;
+        }
+    </style>
 </head>
 <body>
-  <h2>Non-Profit Member Assistant</h2>
-  <div id="chat-box"></div>
-  <div class="input-area">
-    <input type="text" id="user-input" placeholder="Ask a question..." onkeypress="if(event.key==='Enter') send()">
-    <button onclick="send()">Send</button>
-  </div>
 
-  <script>
-    // Replace with your actual Render API endpoint URL
-    const BACKEND_URL = "https://arumugam-pmicc-ai-assistant.onrender.com/chat";
+    <!-- Floating Chat Button -->
+    <button class="chat-btn" id="open-chat-btn" title="Open Chat">💬</button>
 
-    async function send() {
-      const input = document.getElementById('user-input');
-      const box = document.getElementById('chat-box');
-      const text = input.value.trim();
-      if(!text) return;
+    <!-- Chat Window Container -->
+    <div class="chat-window" id="chat-window">
+        <!-- Header with logo and title -->
+        <div class="chat-header">
+            <div class="header-info">
+                <img src="PMICC-Logo.png" alt="PMI Chennai Chapter Logo" class="logo-img">
+                <span class="title-text">PMI Chennai Assistant</span>
+            </div>
+            <button class="close-btn" id="close-chat-btn" title="Close">&times;</button>
+        </div>
 
-      box.innerHTML += `<div class="msg user">${text}</div>`;
-      input.value = '';
+        <!-- Chat History -->
+        <div id="chat-box">
+            <div class="msg bot">Hello! How can I assist you with information regarding the PMI Chennai Chapter?</div>
+        </div>
 
-      const botMsg = document.createElement('div');
-      botMsg.className = 'msg bot';
-      botMsg.textContent = 'Thinking...';
-      box.appendChild(botMsg);
-      box.scrollTop = box.scrollHeight;
+        <!-- Text Input & Send Button -->
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Ask a question..." onkeypress="handleKeyPress(event)">
+            <button class="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
 
-      try {
-        const res = await fetch(BACKEND_URL, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ message: text })
-        });
-        const data = await res.json();
-        botMsg.textContent = data.reply || data.error;
-      } catch(e) {
-        botMsg.textContent = "Error connecting to server.";
-      }
-    }
-  </script>
+    <script>
+        const BACKEND_URL = "https://arumugam-pmicc-ai-assistant.onrender.com/chat";
+
+        const chatWindow = document.getElementById('chat-window');
+        const openChatBtn = document.getElementById('open-chat-btn');
+        const closeChatBtn = document.getElementById('close-chat-btn');
+        const chatBox = document.getElementById('chat-box');
+        const inputField = document.getElementById('user-input');
+
+        function toggleChat() {
+            chatWindow.classList.toggle('active');
+        }
+
+        openChatBtn.addEventListener('click', toggleChat);
+        closeChatBtn.addEventListener('click', toggleChat);
+
+        function appendMessage(sender, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('msg', sender === 'User' ? 'user' : 'bot');
+            msgDiv.textContent = text;
+            chatBox.appendChild(msgDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            return msgDiv;
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        async function sendMessage() {
+            const userText = inputField.value.trim();
+            if (!userText) return;
+
+            appendMessage('User', userText);
+            inputField.value = '';
+
+            const botMsgDiv = appendMessage('Bot', 'Thinking...');
+
+            try {
+                const response = await fetch(BACKEND_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: userText }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Server response error');
+                }
+
+                const data = await response.json();
+
+                if (data.reply) {
+                    botMsgDiv.textContent = data.reply.trim();
+                } else if (data.error) {
+                    botMsgDiv.textContent = `Error: ${data.error}`;
+                } else {
+                    botMsgDiv.textContent = "I'm sorry, I encountered an issue processing your request.";
+                }
+
+            } catch (error) {
+                botMsgDiv.textContent = "Unable to connect to the assistant server. Please check your connection.";
+            }
+        }
+    </script>
 </body>
 </html>
