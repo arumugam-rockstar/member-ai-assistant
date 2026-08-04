@@ -2,6 +2,7 @@ import os
 import zipfile
 import shutil
 import logging
+import threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
@@ -11,78 +12,76 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
-# --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-# --- HuggingFace Inference Setup ---
 HF_TOKEN = os.getenv("HF_TOKEN")
 client = InferenceClient("Qwen/Qwen2.5-7B-Instruct", token=HF_TOKEN)
 
 EXTRACT_FOLDER = "./extracted_docs"
 DB_DIR = "./chroma_db"
 
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embedding_model = None
+vector_store = None
+db_lock = threading.Lock()
 
 def find_zip_file():
-    """Finds the knowledge base zip file regardless of capitalization (e.g. Knowledge_base.zip vs knowledge_base.zip)."""
     for filename in os.listdir("."):
         if filename.lower() == "knowledge_base.zip":
             return filename
     return None
 
-def build_or_load_vector_db():
-    zip_filename = find_zip_file()
+def get_vector_db():
+    global vector_store, embedding_model
+    with db_lock:
+        if vector_store is not None:
+            return vector_store
 
-    # If zip file exists, extract it and FORCE rebuild ChromaDB to purge stale data
-    if zip_filename:
-        logger.info(f"--> Found knowledge base archive: '{zip_filename}'. Extracting and rebuilding Vector DB...")
+        logger.info("--> Loading embedding model...")
+        if embedding_model is None:
+            embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-        # Clean old extracted docs & old vector database
-        if os.path.exists(EXTRACT_FOLDER):
-            shutil.rmtree(EXTRACT_FOLDER)
-        if os.path.exists(DB_DIR):
-            shutil.rmtree(DB_DIR)
+        zip_filename = find_zip_file()
 
-        with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
-            zip_ref.extractall(EXTRACT_FOLDER)
+        # If zip exists and chroma_db hasn't been extracted, rebuild cleanly
+        if zip_filename and not os.path.exists(DB_DIR):
+            logger.info(f"--> Found zip: '{zip_filename}'. Extracting and building Vector DB...")
 
-        logger.info("--> Loading extracted Markdown files...")
-        loader = DirectoryLoader(
-            EXTRACT_FOLDER, 
-            glob="**/*.md",  # Exclusively load Markdown files
-            loader_cls=TextLoader, 
-            loader_kwargs={'autodetect_encoding': True}
-        )
-        raw_documents = loader.load()
+            if os.path.exists(EXTRACT_FOLDER):
+                shutil.rmtree(EXTRACT_FOLDER)
 
-        if not raw_documents:
-            logger.warning("--> No Markdown (.md) documents found in extracted archive!")
+            with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
+                zip_ref.extractall(EXTRACT_FOLDER)
 
-        logger.info(f"--> Splitting {len(raw_documents)} document(s) into chunks...")
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
-        chunks = text_splitter.split_documents(raw_documents)
+            logger.info("--> Loading Markdown files...")
+            loader = DirectoryLoader(
+                EXTRACT_FOLDER, 
+                glob="**/*.md", 
+                loader_cls=TextLoader, 
+                loader_kwargs={'autodetect_encoding': True}
+            )
+            raw_documents = loader.load()
 
-        logger.info(f"--> Building fresh Chroma Vector DB with {len(chunks)} chunks...")
-        vector_db = Chroma.from_documents(
-            documents=chunks,
-            embedding=embedding_model,
-            persist_directory=DB_DIR
-        )
-        return vector_db
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+            chunks = text_splitter.split_documents(raw_documents)
 
-    # Fallback to existing disk DB if zip is not present
-    if os.path.exists(DB_DIR) and os.listdir(DB_DIR):
-        logger.info("--> Loading existing Vector Database from disk...")
-        return Chroma(persist_directory=DB_DIR, embedding_function=embedding_model)
+            logger.info(f"--> Building fresh Chroma Vector DB with {len(chunks)} chunks...")
+            vector_store = Chroma.from_documents(
+                documents=chunks,
+                embedding=embedding_model,
+                persist_directory=DB_DIR
+            )
+            return vector_store
 
-    raise FileNotFoundError("Error: knowledge_base.zip was not found in the root directory!")
+        if os.path.exists(DB_DIR) and os.listdir(DB_DIR):
+            logger.info("--> Loading existing Vector Database from disk...")
+            vector_store = Chroma(persist_directory=DB_DIR, embedding_function=embedding_model)
+            return vector_store
 
-# Initialize vector store at startup
-vector_store = build_or_load_vector_db()
+        raise FileNotFoundError("knowledge_base.zip not found and no vector DB exists!")
 
 @app.route("/", methods=["GET"])
 def home():
@@ -100,8 +99,8 @@ def chat():
         return jsonify({"error": "No message provided."}), 400
 
     try:
-        # Retrieve Top 5 relevant chunks
-        relevant_docs = vector_store.similarity_search(user_message, k=5)
+        db = get_vector_db()
+        relevant_docs = db.similarity_search(user_message, k=5)
         context_text = "\n\n---\n\n".join([doc.page_content for doc in relevant_docs])
 
         system_prompt = f"""You are the official assistant for the PMI Chennai Chapter.
@@ -132,6 +131,5 @@ If a specific name, role, or detail is not present in the context, politely stat
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Dynamically bind to Render's PORT environment variable
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
