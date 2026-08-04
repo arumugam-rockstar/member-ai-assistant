@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Non-Profit Assistant</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+    #chat-box { height: 400px; border: 1px solid #ccc; background: #fff; padding: 15px; overflow-y: auto; border-radius: 8px; }
+    .msg { margin: 8px 0; padding: 8px 12px; border-radius: 6px; }
+    .user { background: #007bff; color: white; text-align: right; }
+    .bot { background: #e9ecef; color: #333; }
+    .input-area { display: flex; gap: 10px; margin-top: 10px; }
+    input { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #ccc; }
+    button { padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>Non-Profit Member Assistant</h2>
+  <div id="chat-box"></div>
+  <div class="input-area">
+    <input type="text" id="user-input" placeholder="Ask a question..." onkeypress="if(event.key==='Enter') send()">
+    <button onclick="send()">Send</button>
+  </div>
+
+  <script>
+    // Replace with your actual Render API endpoint URL
+    const BACKEND_URL = "https://my-nonprofit-bot-api.onrender.com/chat";
+
+    async function send() {
+      const input = document.getElementById('user-input');
+      const box = document.getElementById('chat-box');
+      const text = input.value.trim();
+      if(!text) return;
+
+      box.innerHTML += `<div class="msg user">${text}</div>`;
+      input.value = '';
+
+      const botMsg = document.createElement('div');
+      botMsg.className = 'msg bot';
+      botMsg.textContent = 'Thinking...';
+      box.appendChild(botMsg);
+      box.scrollTop = box.scrollHeight;
+
+      try {
+        const res = await fetch(BACKEND_URL, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ message: text })
+        });
+        const data = await res.json();
+        botMsg.textContent = data.reply || data.error;
+      } catch(e) {
+        botMsg.textContent = "Error connecting to server.";
+      }
+    }
+  </script>
+</body>
+</html>
