@@ -1,5 +1,6 @@
 flask
 flask-cors
+gunicorn
 huggingface-hub
 langchain
 langchain-community
