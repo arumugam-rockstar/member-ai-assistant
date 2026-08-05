@@ -165,6 +165,11 @@
             border-color: #007bff;
         }
 
+        #user-input:disabled {
+            background-color: #e9ecef;
+            cursor: not-allowed;
+        }
+
         button.send-btn {
             padding: 10px 18px;
             background-color: #28a745;
@@ -178,6 +183,11 @@
 
         button.send-btn:hover {
             background-color: #218838;
+        }
+
+        button.send-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
         }
     </style>
 </head>
@@ -205,7 +215,7 @@
         <!-- Text Input & Send Button -->
         <div class="input-area">
             <input type="text" id="user-input" placeholder="Ask a question..." onkeypress="handleKeyPress(event)">
-            <button class="send-btn" onclick="sendMessage()">Send</button>
+            <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
         </div>
     </div>
 
@@ -217,6 +227,7 @@
         const closeChatBtn = document.getElementById('close-chat-btn');
         const chatBox = document.getElementById('chat-box');
         const inputField = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
 
         function toggleChat() {
             chatWindow.classList.toggle('active');
@@ -235,31 +246,48 @@
         }
 
         function handleKeyPress(event) {
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' && !inputField.disabled) {
                 sendMessage();
             }
         }
 
-        async function sendMessage() {
-            const userText = inputField.value.trim();
-            if (!userText) return;
+        function setInputState(disabled) {
+            inputField.disabled = disabled;
+            sendBtn.disabled = disabled;
+            if (!disabled) {
+                inputField.focus();
+            }
+        }
 
-            appendMessage('User', userText);
-            inputField.value = '';
-
-            const botMsgDiv = appendMessage('Bot', 'Thinking...');
+        /**
+         * Robust fetch handler with 60s timeout tolerance for Render cold starts
+         * and automatic retry mechanism.
+         */
+        async function fetchWithRetry(userText, botMsgDiv, attempt = 1) {
+            const controller = new AbortController();
+            // Allow up to 60 seconds (60000 ms) for sleeping instances to boot up
+            const timeoutId = setTimeout(() => controller.abort(), 60000);
 
             try {
+                if (attempt === 1) {
+                    botMsgDiv.textContent = "Thinking...";
+                } else {
+                    botMsgDiv.textContent = "Server is waking up, retrying request...";
+                }
+
                 const response = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ message: userText }),
+                    signal: controller.signal
                 });
 
+                clearTimeout(timeoutId);
+
                 if (!response.ok) {
-                    throw new Error('Server response error');
+                    throw new Error(`Server returned status: ${response.status}`);
                 }
 
                 const data = await response.json();
@@ -273,7 +301,36 @@
                 }
 
             } catch (error) {
-                botMsgDiv.textContent = "Unable to connect to the assistant server. Please check your connection.";
+                clearTimeout(timeoutId);
+
+                // If first attempt timed out or failed, attempt 1 immediate retry
+                if (attempt < 2) {
+                    console.warn("First request failed or timed out. Retrying post-wakeup...", error);
+                    await fetchWithRetry(userText, botMsgDiv, attempt + 1);
+                } else {
+                    console.error("Chat Request Failure:", error);
+                    botMsgDiv.textContent = "Unable to connect to the assistant server. The service may be taking longer than expected to wake up—please try resending your question in a few moments.";
+                }
+            }
+        }
+
+        async function sendMessage() {
+            const userText = inputField.value.trim();
+            if (!userText || inputField.disabled) return;
+
+            appendMessage('User', userText);
+            inputField.value = '';
+
+            // Disable input controls while waiting for API response
+            setInputState(true);
+
+            const botMsgDiv = appendMessage('Bot', 'Thinking...');
+
+            try {
+                await fetchWithRetry(userText, botMsgDiv);
+            } finally {
+                // Re-enable input controls regardless of success/error
+                setInputState(false);
             }
         }
     </script>
